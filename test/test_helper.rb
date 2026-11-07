@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "simplecov"
+SimpleCov.start { add_filter "/test/" }
+
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "net_file"
 
