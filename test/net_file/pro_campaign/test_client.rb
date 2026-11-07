@@ -79,6 +79,38 @@ class TestProCampaignClient < Minitest::Test
     assert_equal error_body, error.response
   end
 
+  def stub_query(resource, id, items, status: 200)
+    stub_request(:get, "#{BASE_URL}/query/#{resource}")
+      .with(query: { "filters[0].field" => "id", "filters[0].operator" => "Eq", "filters[0].value" => id.to_s })
+      .to_return(status: status, headers: JSON_HEADERS, body: { "items" => items, "totalCount" => items.size }.to_json)
+  end
+
+  test "fetch_entity returns the matching record" do
+    stub_query("entity", 11, [{ "id" => 11, "lname" => "Lee" }])
+
+    assert_equal({ "id" => 11, "lname" => "Lee" }, NetFile::ProCampaign::Client.new(token: "abc").fetch_entity("ACCT", 11))
+  end
+
+  test "fetch_activity returns the matching record" do
+    stub_query("activity", 11, [{ "id" => 11, "rptType" => "A" }])
+
+    assert_equal({ "id" => 11, "rptType" => "A" }, NetFile::ProCampaign::Client.new(token: "abc").fetch_activity("ACCT", 11))
+  end
+
+  test "fetch returns nil when no record has the id" do
+    stub_query("entity", 999, [])
+
+    assert_nil NetFile::ProCampaign::Client.new(token: "abc").fetch_entity("ACCT", 999)
+  end
+
+  test "fetch raises with the full url on a rejected query" do
+    stub_query("entity", "abc", [], status: 400)
+
+    error = assert_raises(NetFile::ClientError) { NetFile::ProCampaign::Client.new(token: "abc").fetch_entity("ACCT", "abc") }
+    assert_equal 400, error.status
+    assert_includes error.url, "#{BASE_URL}/query/entity?filters%5B0%5D.field=id"
+  end
+
   test "token raises on 401 without retrying" do
     stub = stub_entity("abc", 401)
 

@@ -20,7 +20,8 @@ module NetFile
     # Endpoint methods take the request body as documented by NetFile
     # (string keys, camelCase field names) and return the parsed response.
     # An upsert returns 200 even when items fail, so callers should check
-    # "committed" and each item's "action".
+    # "committed" and each item's "action". The fetch methods return the
+    # record's non-null fields as a hash, or nil when no record has the id.
     class Client
       include ErrorHandling
 
@@ -38,24 +39,39 @@ module NetFile
       end
 
       def upsert_entity(account, payload)
-        request(:post, "#{account}/upsert/entity", payload)
+        request(:post, "#{account}/upsert/entity", body: payload)
       end
 
       def upsert_activity(account, payload)
-        request(:post, "#{account}/upsert/activity", payload)
+        request(:post, "#{account}/upsert/activity", body: payload)
+      end
+
+      def fetch_entity(account, id)
+        fetch_by_id("#{account}/query/entity", id)
+      end
+
+      def fetch_activity(account, id)
+        fetch_by_id("#{account}/query/activity", id)
       end
 
       private
 
-      def request(method, path, body = nil)
-        send_request(method, path, body, @token || @token_provider.fetch)
+      def fetch_by_id(path, id)
+        # NetFile only honors this indexed filter format; others are silently
+        # ignored and return every record.
+        params = { "filters[0].field" => "id", "filters[0].operator" => "Eq", "filters[0].value" => id.to_s }
+        request(:get, path, params: params)["items"].first
+      end
+
+      def request(method, path, body: nil, params: nil)
+        send_request(method, path, body, params, @token || @token_provider.fetch)
       rescue AuthenticationError => e
         raise unless e.status == 401 && @token_provider
 
-        send_request(method, path, body, @token_provider.fetch(refresh: true))
+        send_request(method, path, body, params, @token_provider.fetch(refresh: true))
       end
 
-      def send_request(method, path, body, token)
+      def send_request(method, path, body, params, token)
         connection = Faraday.new(BASE_URL) do |f|
           f.request :authorization, "Bearer", token
           f.request :json
@@ -63,8 +79,10 @@ module NetFile
           f.response :json
           f.response :raise_error
         end
-        with_errors("#{BASE_URL}/#{path}", "NetFile rejected the bearer token") do
-          connection.run_request(method, path, body, nil).body
+        url = "#{BASE_URL}/#{path}"
+        url += "?#{URI.encode_www_form(params)}" if params
+        with_errors(url, "NetFile rejected the bearer token") do
+          connection.run_request(method, path, body, nil) { |req| req.params.update(params) if params }.body
         end
       end
     end
