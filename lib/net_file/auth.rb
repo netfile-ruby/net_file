@@ -8,20 +8,28 @@ module NetFile
   #   token = auth.create_token            # => NetFile::Token
   #   auth.test_token(token.access_token)  # => true
   #
-  # Tokens expire after `token.expires_in` seconds (currently 3600). Refreshing
-  # them is left to the caller.
+  # Tokens expire after `token.expires_in` seconds (currently 3600). `fetch`
+  # keeps one access token in memory and replaces it when asked to refresh, so
+  # an Auth can serve as a client's token provider.
   #
-  # Both methods raise a NetFile::ClientError (carrying url, status, request
+  # Every method raises a NetFile::ClientError (carrying url, status, request
   # and response) or one of its subclasses:
   # - NetFile::AuthenticationError when NetFile rejects the credentials or token
   # - NetFile::ServerError on a 5xx, connection failure, or timeout
   # - NetFile::ClientError on any other failed response
   class Auth
+    include ErrorHandling
+
     BASE_URL = "https://netfile.com/go/v2"
 
     def initialize(api_key:, api_secret:)
       @api_key = api_key
       @api_secret = api_secret
+    end
+
+    def fetch(refresh: false)
+      @access_token = nil if refresh
+      @access_token ||= create_token.access_token
     end
 
     def create_token
@@ -50,32 +58,6 @@ module NetFile
         connection.get("test-bearer-token")
       end
       true
-    end
-
-    private
-
-    def with_errors(url, auth_message)
-      yield
-    rescue Faraday::UnauthorizedError, Faraday::ForbiddenError => e
-      raise client_error(AuthenticationError, e, url, "#{auth_message} (#{e.response_status})")
-    rescue Faraday::ServerError, Faraday::ConnectionFailed, Faraday::TimeoutError => e
-      raise client_error(ServerError, e, url, "NetFile request failed: #{e.message}")
-    rescue Faraday::Error => e
-      raise client_error(ClientError, e, url, "NetFile request failed: #{e.message}")
-    end
-
-    def client_error(error_class, faraday_error, url, message)
-      error_class.new(
-        message: message,
-        url: url,
-        status: faraday_error.response_status,
-        request: presence(faraday_error.response&.dig(:request, :body)),
-        response: presence(faraday_error.response_body)
-      )
-    end
-
-    def presence(value)
-      value unless value.to_s.empty?
     end
   end
 end

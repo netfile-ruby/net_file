@@ -80,4 +80,14 @@ class TestAuth < Minitest::Test
 
     assert_raises(NetFile::AuthenticationError) { @auth.test_token("bad") }
   end
+
+  test "fetch reuses the token until asked to refresh" do
+    responses = %w[t1 t2].map do |token|
+      { status: 200, headers: { "Content-Type" => "application/json" },
+        body: { access_token: token, token_type: "Bearer", expires_in: 3600 }.to_json }
+    end
+    stub_request(:post, CREATE_URL).to_return(*responses)
+
+    assert_equal %w[t1 t1 t2], [@auth.fetch, @auth.fetch, @auth.fetch(refresh: true)]
+  end
 end
