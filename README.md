@@ -2,7 +2,7 @@
 
 A thin Ruby client for NetFile's v2 APIs. It currently covers authentication and the parts of the Pro Campaign Account API needed to write and read entities and transactions (activities).
 
-The client is deliberately a light wrapper around the HTTP endpoints: payloads go to NetFile as-is, and responses come back as parsed hashes. Mapping your data to NetFile's fields, and deciding what to do with the results, is left to the calling app.
+The client is deliberately a light wrapper around the HTTP endpoints: payloads go to NetFile as-is, and responses come back as parsed hashes (wrapped in a small response object for writes). Mapping your data to NetFile's fields, and deciding what to do with the results, is left to the calling app.
 
 ## Installation
 
@@ -25,9 +25,9 @@ result = client.upsert_entity("ACCOUNT", {
 
 # check this to confirm the action completed - the API can return 200 and still not
 # actually do anything
-result["committed"]               # => true
-result["items"][0]["action"]      # => "Insert"
-result["items"][0]["netFileId"]   # => 11
+result.success?                 # => true
+result.items[0]["action"]       # => "Insert"
+result.items[0]["netFileId"]    # => 11
 
 client.fetch_entity("ACCOUNT", 11)
 # => {"id" => 11, "fname" => "Ada", "lname" => "Lee", "city" => "Fresno", ...}
@@ -39,10 +39,12 @@ result = client.upsert_activity("ACCOUNT", {
   }]
 })
 
-result["items"][0]["netFileId"]   # => 12
+if (result.success?)
+  result.items[0]["netFileId"]    # => 12
 
-client.fetch_activity("ACCOUNT", 12)
-# => {"id" => 12, "amount" => 25, ...}
+  client.fetch_activity("ACCOUNT", 12)
+  # => {"id" => 12, "amount" => 25, ...}
+end
 ```
 
 ## Usage
@@ -128,9 +130,9 @@ result = client.upsert_entity("ACCOUNT", {
   "items" => [{ "uploadId" => "entity-42", "fname" => "Ada", "lname" => "Lee", "city" => "Fresno" }]
 })
 
-result["committed"]               # => true
-result["items"][0]["action"]      # => "Insert"
-result["items"][0]["netFileId"]   # => 11
+result.success?                 # => true
+result.items[0]["action"]       # => "Insert"
+result.items[0]["netFileId"]    # => 11
 
 client.upsert_activity("ACCOUNT", {
   "items" => [{
@@ -140,10 +142,21 @@ client.upsert_activity("ACCOUNT", {
 })
 ```
 
+Both methods return a `NetFile::ProCampaign::UpsertResponse`:
+
+| Method     | Returns                                               |
+| ---------- | ----------------------------------------------------- |
+| `url`      | the full URL requested                                |
+| `status`   | the HTTP status                                       |
+| `success?` | true if the status was 200 and every item was written |
+| `request`  | the payload you sent                                  |
+| `response` | the full parsed response                              |
+| `items`    | the response's `items`, one result per item you sent  |
+
 Things to know about writes:
 
 - **Only the fields you send change.** A field you leave out keeps its stored value; sending `null` or `""` clears it.
-- **Failed items don't raise.** An upsert returns HTTP 200 even when items fail. Check `committed` and each item's `action` (`"Insert"`, `"Update"` or `"Failed"`), and see `validationResults` for the reasons.
+- **Failed items don't raise.** An upsert returns HTTP 200 even when items fail, so check `success?` and each item's `action` (`"Insert"`, `"Update"` or `"Failed"`), and see `validationResults` for the reasons.
 - **One failure rolls back the batch by default.** Send `"rollbackOnAnyFailure" => false` to write every item that succeeds.
 - **Use `netFileId` from the response as `id` on later writes.**
 
@@ -176,8 +189,8 @@ begin
 rescue NetFile::ClientError => e
   e.url       # the full URL requested
   e.status    # HTTP status, or nil if no response was received
-  e.request   # raw request body, or nil if none was sent
-  e.response  # raw response body, or nil if empty
+  e.request   # the request payload as a hash, or nil if none was sent
+  e.response  # the parsed response (a string if it isn't JSON), or nil if empty
 end
 ```
 

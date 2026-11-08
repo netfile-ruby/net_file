@@ -18,10 +18,9 @@ module NetFile
     #     provider.fetch(refresh: true) once when NetFile responds with a 401.
     #
     # Endpoint methods take the request body as documented by NetFile
-    # (string keys, camelCase field names) and return the parsed response.
-    # An upsert returns 200 even when items fail, so callers should check
-    # "committed" and each item's "action". The fetch methods return the
-    # record's non-null fields as a hash, or nil when no record has the id.
+    # (string keys, camelCase field names). The upsert methods return an
+    # UpsertResponse; the fetch methods return the record's non-null fields
+    # as a hash, or nil when no record has the id.
     class Client
       include ErrorHandling
 
@@ -39,11 +38,11 @@ module NetFile
       end
 
       def upsert_entity(account, payload)
-        request(:post, "#{account}/upsert/entity", body: payload)
+        upsert("#{account}/upsert/entity", payload)
       end
 
       def upsert_activity(account, payload)
-        request(:post, "#{account}/upsert/activity", body: payload)
+        upsert("#{account}/upsert/activity", payload)
       end
 
       def fetch_entity(account, id)
@@ -56,11 +55,21 @@ module NetFile
 
       private
 
+      def upsert(path, payload)
+        response = request(:post, path, body: payload)
+        UpsertResponse.new(
+          url: response.env.url.to_s,
+          status: response.status,
+          request: payload,
+          response: response.body
+        )
+      end
+
       def fetch_by_id(path, id)
         # NetFile only honors this indexed filter format; others are silently
         # ignored and return every record.
         params = { "filters[0].field" => "id", "filters[0].operator" => "Eq", "filters[0].value" => id.to_s }
-        request(:get, path, params: params)["items"].first
+        request(:get, path, params: params).body["items"].first
       end
 
       def request(method, path, body: nil, params: nil)
@@ -75,14 +84,14 @@ module NetFile
         connection = Faraday.new(BASE_URL) do |f|
           f.request :authorization, "Bearer", token
           f.request :json
-          # Declared before raise_error so errors carry the raw, unparsed body.
+          # Declared before raise_error so errors get the unparsed body for ErrorHandling#parse.
           f.response :json
           f.response :raise_error
         end
         url = "#{BASE_URL}/#{path}"
         url += "?#{URI.encode_www_form(params)}" if params
         with_errors(url, "NetFile rejected the bearer token") do
-          connection.run_request(method, path, body, nil) { |req| req.params.update(params) if params }.body
+          connection.run_request(method, path, body, nil) { |req| req.params.update(params) if params }
         end
       end
     end

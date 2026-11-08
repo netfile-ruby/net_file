@@ -49,7 +49,7 @@ class TestAuth < Minitest::Test
 
     error = assert_raises(NetFile::ServerError) { @auth.create_token }
     assert_equal 503, error.status
-    assert_equal '{"message":"down"}', error.response
+    assert_equal({ "message" => "down" }, error.response)
   end
 
   test "create_token raises server error on timeout" do

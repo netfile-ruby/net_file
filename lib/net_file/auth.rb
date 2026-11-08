@@ -35,7 +35,7 @@ module NetFile
     def create_token
       connection = Faraday.new(BASE_URL) do |f|
         f.request :authorization, :basic, @api_key, @api_secret
-        # Declared before raise_error so errors carry the raw, unparsed body.
+        # Declared before raise_error so errors get the unparsed body for ErrorHandling#parse.
         f.response :json
         f.response :raise_error
       end

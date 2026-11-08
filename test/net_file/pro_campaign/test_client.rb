@@ -8,7 +8,7 @@ class TestProCampaignClient < Minitest::Test
   ENTITY_URL = "#{BASE_URL}/upsert/entity"
   ACTIVITY_URL = "#{BASE_URL}/upsert/activity"
   JSON_HEADERS = { "Content-Type" => "application/json" }.freeze
-  UPSERT_RESPONSE = { "committed" => true, "successCount" => 1, "failureCount" => 0, "items" => [] }.freeze
+  UPSERT_RESPONSE = { "committed" => true, "successCount" => 1, "failureCount" => 0, "items" => [{ "index" => 0, "action" => "Insert", "netFileId" => 11 }] }.freeze
 
   class FakeTokenProvider
     attr_reader :calls
@@ -43,7 +43,7 @@ class TestProCampaignClient < Minitest::Test
     client.upsert_entity("ACCT", { "items" => [] })
   end
 
-  test "upsert_entity posts the payload and returns the parsed response" do
+  test "upsert_entity posts the payload and returns an upsert response" do
     payload = { "rollbackOnAnyFailure" => false, "items" => [{ "uploadId" => "c-1", "lname" => "Lee" }] }
     stub = stub_request(:post, ENTITY_URL)
       .with(body: payload.to_json, headers: JSON_HEADERS)
@@ -51,11 +51,16 @@ class TestProCampaignClient < Minitest::Test
 
     result = NetFile::ProCampaign::Client.new(token: "abc").upsert_entity("ACCT", payload)
 
-    assert_equal UPSERT_RESPONSE, result
     assert_requested stub
+    assert_equal ENTITY_URL, result.url
+    assert_equal 200, result.status
+    assert_equal payload, result.request
+    assert_equal UPSERT_RESPONSE, result.response
+    assert_equal UPSERT_RESPONSE["items"], result.items
+    assert result.success?
   end
 
-  test "upsert_activity posts the payload and returns the parsed response" do
+  test "upsert_activity posts the payload and returns an upsert response" do
     payload = { "items" => [{ "uploadId" => "t-1", "rptType" => "A", "fppcDate" => "2026-11-01", "amount" => 100 }] }
     stub = stub_request(:post, ACTIVITY_URL)
       .with(body: payload.to_json, headers: JSON_HEADERS)
@@ -63,20 +68,48 @@ class TestProCampaignClient < Minitest::Test
 
     result = NetFile::ProCampaign::Client.new(token: "abc").upsert_activity("ACCT", payload)
 
-    assert_equal UPSERT_RESPONSE, result
     assert_requested stub
+    assert_equal ACTIVITY_URL, result.url
+    assert_equal UPSERT_RESPONSE, result.response
   end
 
-  test "a rejected request raises with the raw request and response" do
-    error_body = '{"statusCode":400,"errors":{"generalErrors":["bad"]}}'
+  test "an uncommitted upsert is not a success" do
+    failed = { "committed" => false, "successCount" => 0, "failureCount" => 1,
+               "items" => [{ "index" => 0, "action" => "Failed", "errorMessage" => "Validation failed." }] }
+    stub_request(:post, ENTITY_URL).to_return(status: 200, headers: JSON_HEADERS, body: failed.to_json)
+
+    result = upsert(NetFile::ProCampaign::Client.new(token: "abc"))
+
+    refute result.success?
+    assert_equal "Failed", result.items[0]["action"]
+  end
+
+  test "a committed upsert with failed items is not a success" do
+    partial = { "committed" => true, "successCount" => 1, "failureCount" => 1,
+                "items" => [{ "index" => 0, "action" => "Update" }, { "index" => 1, "action" => "Failed" }] }
+    stub_request(:post, ENTITY_URL).to_return(status: 200, headers: JSON_HEADERS, body: partial.to_json)
+
+    refute upsert(NetFile::ProCampaign::Client.new(token: "abc")).success?
+  end
+
+  test "a rejected request raises with the parsed request and response" do
+    error_body = { "statusCode" => 400, "errors" => { "generalErrors" => ["bad"] } }
     stub_request(:post, ENTITY_URL)
-      .to_return(status: 400, headers: { "Content-Type" => "application/problem+json" }, body: error_body)
+      .to_return(status: 400, headers: { "Content-Type" => "application/problem+json" }, body: error_body.to_json)
 
     error = assert_raises(NetFile::ClientError) { upsert(NetFile::ProCampaign::Client.new(token: "abc")) }
     assert_equal ENTITY_URL, error.url
     assert_equal 400, error.status
-    assert_equal '{"items":[]}', error.request
+    assert_equal({ "items" => [] }, error.request)
     assert_equal error_body, error.response
+  end
+
+  test "a non-JSON error body is kept as a string" do
+    stub_request(:post, ENTITY_URL)
+      .to_return(status: 502, headers: { "Content-Type" => "text/html" }, body: "<html>Bad Gateway</html>")
+
+    error = assert_raises(NetFile::ServerError) { upsert(NetFile::ProCampaign::Client.new(token: "abc")) }
+    assert_equal "<html>Bad Gateway</html>", error.response
   end
 
   def stub_query(resource, id, items, status: 200)
@@ -134,7 +167,7 @@ class TestProCampaignClient < Minitest::Test
     stub_entity("new", 200)
     client = NetFile::ProCampaign::Client.new(api_key: "key", api_secret: "secret")
 
-    assert_equal UPSERT_RESPONSE, upsert(client)
+    assert_equal UPSERT_RESPONSE, upsert(client).response
   end
 
   test "api key raises when the refreshed token is also rejected" do
@@ -153,7 +186,7 @@ class TestProCampaignClient < Minitest::Test
     provider = FakeTokenProvider.new("old", "new")
     client = NetFile::ProCampaign::Client.new(token_provider: provider)
 
-    assert_equal UPSERT_RESPONSE, upsert(client)
+    assert_equal UPSERT_RESPONSE, upsert(client).response
     assert_equal [false, true], provider.calls
   end
 

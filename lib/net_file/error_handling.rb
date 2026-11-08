@@ -19,13 +19,19 @@ module NetFile
         message: message,
         url: url,
         status: faraday_error.response_status,
-        request: presence(faraday_error.response&.dig(:request, :body)),
-        response: presence(faraday_error.response_body)
+        request: parse(faraday_error.response&.dig(:request, :body)),
+        response: parse(faraday_error.response_body)
       )
     end
 
-    def presence(value)
-      value unless value.to_s.empty?
+    # Error bodies aren't guaranteed to be JSON (e.g. a gateway's HTML error
+    # page), so keep the raw string rather than fail while building the error.
+    def parse(body)
+      return nil if body.to_s.empty?
+
+      JSON.parse(body)
+    rescue JSON::ParserError
+      body
     end
   end
 end
